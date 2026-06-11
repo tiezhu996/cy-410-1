@@ -16,6 +16,8 @@ from src.utils.constants import FIELD_DISPLAY_NAMES
 
 
 class DataDiagnostic:
+    SYSTEM_TABLE_PREFIXES = ("sqlite_", "sys_", "pg_", "_test_")
+
     def __init__(self) -> None:
         self.field_notes = {
             "project_name": "非遗项目正式名称，应为唯一标识",
@@ -34,9 +36,13 @@ class DataDiagnostic:
             "declare_year": "申报年份，应在合理范围内",
         }
 
+    def _is_system_table(self, name: str) -> bool:
+        return any(name.startswith(prefix) for prefix in self.SYSTEM_TABLE_PREFIXES)
+
     def scan_database(self, db_path: str) -> DatabaseDiagnostic:
         repo = HeritageRepository(db_path)
         tables = repo.list_tables()
+        tables = [t for t in tables if not self._is_system_table(t)]
         table_diagnostics: list[TableDiagnostic] = []
         total_records = 0
 

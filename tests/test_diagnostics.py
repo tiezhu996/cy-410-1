@@ -110,3 +110,111 @@ def test_diagnostics_export_html(tmp_path: Path) -> None:
     assert "数据质量诊断报告" in content
     assert "综合质量评分" in content
     assert str(report.overall_quality_score) in content
+
+
+def test_repository_list_tables_excludes_system_tables(tmp_path: Path) -> None:
+    from src.store.database import connect, init_db
+    from src.store.repository import HeritageRepository
+
+    db = tmp_path / "heritage.db"
+    init_db(str(db))
+    DataImporter().import_file("tests/fixtures/sample.csv", str(db))
+
+    with connect(str(db)) as conn:
+        conn.execute("ANALYZE")
+        conn.execute("CREATE TABLE IF NOT EXISTS sys_config (key TEXT, value TEXT)")
+        conn.execute("CREATE TABLE IF NOT EXISTS _test_internal (data TEXT)")
+        all_tables_before = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        has_sqlite = any(t.startswith("sqlite_") for t in all_tables_before)
+        if not has_sqlite:
+            conn.execute("CREATE TABLE IF NOT EXISTS sqlite_stat1 (tbl, idx, stat)")
+        conn.commit()
+
+    repo = HeritageRepository(str(db))
+    tables = repo.list_tables()
+
+    assert "items" in tables
+    for t in tables:
+        assert not t.startswith("sqlite_"), f"系统表 {t} 未被过滤"
+        assert not t.startswith("sys_"), f"系统表 {t} 未被过滤"
+        assert not t.startswith("_test_"), f"系统表 {t} 未被过滤"
+
+    all_tables = repo.list_tables(include_system=True)
+    has_any_system = (
+        any(t.startswith("sqlite_") for t in all_tables) or
+        any(t.startswith("sys_") for t in all_tables) or
+        any(t.startswith("_test_") for t in all_tables)
+    )
+    assert has_any_system, "include_system=True 应返回包含系统表的完整列表"
+
+
+def test_diagnostics_excludes_sqlite_internal_tables(tmp_path: Path) -> None:
+    from src.store.database import connect, init_db
+
+    db = tmp_path / "heritage.db"
+    init_db(str(db))
+    DataImporter().import_file("tests/fixtures/sample.csv", str(db))
+
+    with connect(str(db)) as conn:
+        conn.execute("ANALYZE")
+        conn.execute("CREATE TABLE IF NOT EXISTS sys_config (key TEXT, value TEXT)")
+        conn.commit()
+
+    with connect(str(db)) as conn:
+        all_tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        has_sqlite = any(t.startswith("sqlite_") for t in all_tables)
+        if not has_sqlite:
+            conn.execute("CREATE TABLE IF NOT EXISTS sqlite_stat1 (tbl, idx, stat)")
+            conn.execute("INSERT INTO sqlite_stat1 VALUES ('items', 'idx', '100')")
+            conn.commit()
+
+    diagnostic = DataDiagnostic()
+    report = diagnostic.scan_database(str(db))
+
+    table_names = [t.name for t in report.tables]
+    assert "items" in table_names, "业务表 items 应该在报告中"
+    for t in table_names:
+        assert not t.startswith("sqlite_"), f"SQLite 系统表 {t} 不应出现在诊断报告中"
+        assert not t.startswith("sys_"), f"系统表 {t} 不应出现在诊断报告中"
+
+    items_table = next(t for t in report.tables if t.name == "items")
+    assert report.total_tables == len(report.tables)
+    assert report.total_records == items_table.total_rows
+
+
+def test_diagnostics_export_html_no_system_tables(tmp_path: Path) -> None:
+    from src.store.database import connect, init_db
+
+    db = tmp_path / "heritage.db"
+    output = tmp_path / "diagnostics.html"
+    init_db(str(db))
+    DataImporter().import_file("tests/fixtures/sample.csv", str(db))
+
+    with connect(str(db)) as conn:
+        conn.execute("ANALYZE")
+        conn.execute("CREATE TABLE IF NOT EXISTS sys_config (key TEXT, value TEXT)")
+        conn.commit()
+
+    diagnostic = DataDiagnostic()
+    report = diagnostic.scan_database(str(db))
+    diagnostic.export_html(report, str(output))
+
+    content = output.read_text(encoding="utf-8")
+    assert "sqlite_stat" not in content, "HTML 报告中不应包含 sqlite_stat 系统表"
+    assert "sys_config" not in content, "HTML 报告中不应包含 sys_config 系统表"
+    assert "items" in content, "HTML 报告中应包含业务表 items"
+    assert str(report.total_tables) in content
+
+
+def test_diagnostics_is_system_table_helper() -> None:
+    diagnostic = DataDiagnostic()
+    assert diagnostic._is_system_table("sqlite_sequence")
+    assert diagnostic._is_system_table("sqlite_stat1")
+    assert diagnostic._is_system_table("sys_config")
+    assert diagnostic._is_system_table("pg_catalog")
+    assert diagnostic._is_system_table("_test_internal")
+    assert not diagnostic._is_system_table("items")
+    assert not diagnostic._is_system_table("users")
+    assert not diagnostic._is_system_table("my_sqlite_data")

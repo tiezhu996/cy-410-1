@@ -158,12 +158,20 @@ class HeritageRepository:
             ).fetchall()
             return [row[0] for row in rows]
 
-    def list_tables(self) -> list[str]:
+    SYSTEM_TABLE_PREFIXES = ("sqlite_", "sys_", "pg_", "_test_")
+
+    def list_tables(self, include_system: bool = False) -> list[str]:
         with connect(self.db_path) as conn:
             rows = conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
             ).fetchall()
-            return [row[0] for row in rows]
+            tables = [row[0] for row in rows]
+            if not include_system:
+                tables = [
+                    name for name in tables
+                    if not any(name.startswith(prefix) for prefix in self.SYSTEM_TABLE_PREFIXES)
+                ]
+            return tables
 
     def get_table_columns(self, table: str) -> list[tuple[str, str]]:
         with connect(self.db_path) as conn:
