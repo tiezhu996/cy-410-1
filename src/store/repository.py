@@ -85,3 +85,97 @@ class HeritageRepository:
         with connect(self.db_path) as conn:
             cursor = conn.execute(sql)
             return cursor.fetchall() if cursor.description else []
+
+    def count_total(self, table: str = "items") -> int:
+        with connect(self.db_path) as conn:
+            result = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            return result[0] if result else 0
+
+    def count_nulls(self, field: str, table: str = "items") -> int:
+        with connect(self.db_path) as conn:
+            result = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {field} IS NULL OR {field} = ''"
+            ).fetchone()
+            return result[0] if result else 0
+
+    def count_duplicates(self, field: str, table: str = "items") -> int:
+        with connect(self.db_path) as conn:
+            result = conn.execute(
+                f"SELECT SUM(cnt) FROM (SELECT COUNT(*) AS cnt FROM {table} WHERE {field} IS NOT NULL GROUP BY {field} HAVING COUNT(*) > 1)"
+            ).fetchone()
+            return result[0] if result and result[0] else 0
+
+    def count_anomalies(self, table: str = "items") -> int:
+        with connect(self.db_path) as conn:
+            result = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE is_anomaly = 1").fetchone()
+            return result[0] if result else 0
+
+    def count_field_anomalies(self, field: str, table: str = "items") -> int:
+        from src.models.fields import INTEGER_FIELDS
+
+        if field in INTEGER_FIELDS:
+            with connect(self.db_path) as conn:
+                if field == "inheritor_age":
+                    result = conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE {field} IS NOT NULL AND ({field} < 0 OR {field} > 120)"
+                    ).fetchone()
+                elif field == "declare_year":
+                    result = conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE {field} IS NOT NULL AND ({field} < 1900 OR {field} > 2100)"
+                    ).fetchone()
+                elif field == "batch":
+                    result = conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE {field} IS NOT NULL AND ({field} < 1 OR {field} > 10)"
+                    ).fetchone()
+                else:
+                    result = conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE {field} IS NOT NULL AND {field} < 0"
+                    ).fetchone()
+                return result[0] if result else 0
+        elif field == "endangerment":
+            from src.utils.constants import ENDANGERMENT_LEVELS
+
+            placeholders = ", ".join(["?"] * len(ENDANGERMENT_LEVELS))
+            with connect(self.db_path) as conn:
+                result = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {field} IS NOT NULL AND {field} NOT IN ({placeholders})",
+                    ENDANGERMENT_LEVELS,
+                ).fetchone()
+                return result[0] if result else 0
+        elif field == "inheritor_gender":
+            with connect(self.db_path) as conn:
+                result = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} WHERE {field} IS NOT NULL AND {field} NOT IN ('男', '女')"
+                ).fetchone()
+                return result[0] if result else 0
+        return 0
+
+    def get_sample_values(self, field: str, limit: int = 5, table: str = "items") -> list[Any]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT {field} FROM {table} WHERE {field} IS NOT NULL LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [row[0] for row in rows]
+
+    def list_tables(self) -> list[str]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            ).fetchall()
+            return [row[0] for row in rows]
+
+    def get_table_columns(self, table: str) -> list[tuple[str, str]]:
+        with connect(self.db_path) as conn:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            return [(row["name"], row["type"]) for row in rows]
+
+    def count_duplicate_rows(self, table: str = "items") -> int:
+        with connect(self.db_path) as conn:
+            columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            if "project_code" in columns:
+                result = conn.execute(
+                    f"SELECT COUNT(*) - COUNT(DISTINCT project_code) FROM {table} WHERE project_code IS NOT NULL"
+                ).fetchone()
+                return result[0] if result else 0
+            return 0
