@@ -16,7 +16,7 @@ from src.utils.constants import FIELD_DISPLAY_NAMES
 
 
 class DataDiagnostic:
-    SYSTEM_TABLE_PREFIXES = ("sqlite_", "sys_", "pg_", "_test_")
+    SYSTEM_TABLE_PREFIXES = ("sqlite_",)
 
     def __init__(self) -> None:
         self.field_notes = {

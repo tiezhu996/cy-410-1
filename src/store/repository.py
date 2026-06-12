@@ -158,7 +158,7 @@ class HeritageRepository:
             ).fetchall()
             return [row[0] for row in rows]
 
-    SYSTEM_TABLE_PREFIXES = ("sqlite_", "sys_", "pg_", "_test_")
+    SYSTEM_TABLE_PREFIXES = ("sqlite_",)
 
     def list_tables(self, include_system: bool = False) -> list[str]:
         with connect(self.db_path) as conn:
